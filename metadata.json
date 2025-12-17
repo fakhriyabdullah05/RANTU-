@@ -1,0 +1,7 @@
+{
+  "name": "RANTU - Agricultural Marketplace",
+  "description": "A comprehensive platform connecting farmers and buyers with AI-powered insights, real-time market data, and seamless logistics.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
