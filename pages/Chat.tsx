@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
+import { GoogleGenAI, Content } from "@google/genai";
 
 interface Message {
   id: number;
@@ -159,22 +160,6 @@ export const Chat: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [sessions, activeSessionId, loading, activeTab]);
 
-  // AI Logic 
-  const getBotResponse = (text: string) => {
-    const lower = text.toLowerCase();
-    if (lower.includes('halo') || lower.includes('hai')) {
-      return "Halo juga! 👋 Semoga hari Anda menyenangkan.\n\nSaya adalah asisten virtual RANTU yang didesain khusus untuk membantu petani dan pembeli.\n\nAnda bisa menanyakan hal-hal spesifik seperti:\n• \"Berapa harga bawang merah di pasar Angso Duo?\"\n• \"Bagaimana cara mengatasi daun cabai keriting?\"\n• \"Apakah nanti sore akan hujan?\"\n\nApa yang bisa saya bantu sekarang?";
-    }
-    if (lower.includes('harga') || lower.includes('berapa')) {
-       return "Berikut rangkuman harga rata-rata komoditas pangan di pasar Jambi hari ini:\n\n🥦 Sayuran Segar\n• Bayam/Kangkung: Rp 2.500 - 3.000 /ikat\n• Tomat Sayur: Rp 8.000 /kg\n• Wortel Berastagi: Rp 12.000 /kg\n\n🌶️ Bumbu & Rempah\n• Cabai Merah: Rp 45.000 /kg\n• Bawang Merah: Rp 32.000 /kg\n\nData diperbarui pukul 08:00 WIB. Ada komoditas lain yang ingin dicek?";
-    }
-    if (lower.includes('cuaca')) {
-      return "🌤️ Laporan Cuaca Wilayah Jambi & Sekitarnya\n\n📅 Kondisi Saat Ini: Cerah Berawan, Suhu 31°C\n💧 Kelembapan: 70%\n\n📢 Prakiraan Lanjutan:\n• Siang: Terik dengan indeks UV tinggi.\n• Sore: Waspada potensi hujan lokal di wilayah Muaro Jambi.";
-    }
-    // Default fallback
-    return "Maaf, saya belum memahami pertanyaan spesifik Anda sepenuhnya. 🤔\n\nCoba tanya tentang:\n• 'Harga cabai'\n• 'Cuaca hari ini'\n• 'Cara tanam padi'";
-  };
-
   // Seller Logic (Updated with simple keyword matching)
   const getSellerResponse = (text: string) => {
     const lower = text.toLowerCase();
@@ -207,9 +192,13 @@ export const Chat: React.FC = () => {
     return responses[Math.floor(Math.random() * responses.length)];
   };
 
-  const handleSend = (text: string = input) => {
+  const handleSend = async (text: string = input) => {
     if (!text.trim() || !activeSessionId) return;
     
+    const sessionId = activeSessionId;
+    const currentSession = sessions.find(s => s.id === sessionId);
+    if (!currentSession) return;
+
     const userMsg: Message = { 
       id: Date.now(), 
       sender: 'user', 
@@ -219,7 +208,7 @@ export const Chat: React.FC = () => {
     
     // Add user message
     setSessions(prev => prev.map(s => 
-      s.id === activeSessionId 
+      s.id === sessionId 
       ? { ...s, messages: [...s.messages, userMsg], lastMessage: text, timestamp: 'Now' } 
       : s
     ));
@@ -227,30 +216,74 @@ export const Chat: React.FC = () => {
     setInput('');
     setLoading(true);
 
-    // Determine Response Type
-    setTimeout(() => {
-       const currentSession = sessions.find(s => s.id === activeSessionId);
-       // Safety check: if session was deleted or user switched too fast
-       if (!currentSession) return;
+    if (currentSession.type === 'ai') {
+        try {
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            
+            // Convert existing messages to Gemini History format
+            const history: Content[] = currentSession.messages.map(m => ({
+                role: m.sender === 'user' ? 'user' : 'model',
+                parts: [{ text: m.text }]
+            }));
 
-       const isAI = currentSession.type === 'ai';
-       const responseText = isAI ? getBotResponse(userMsg.text) : getSellerResponse(userMsg.text);
-       const senderType = isAI ? 'bot' : 'seller';
+            const chat = ai.chats.create({
+                model: 'gemini-2.5-flash',
+                history: history,
+                config: {
+                    systemInstruction: "You are RANTU AI, a helpful and friendly agricultural assistant for the RANTU app in Jambi, Indonesia. Help users with commodity prices (cabai, bawang, etc), weather in Jambi, farming tips, and app features. Use Indonesian language and emojis.",
+                }
+            });
 
-       const botMsg: Message = { 
-         id: Date.now() + 1, 
-         sender: senderType, 
-         text: responseText, 
-         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit'}) 
-       };
-       
-       setSessions(prev => prev.map(s => 
-          s.id === activeSessionId 
-          ? { ...s, messages: [...s.messages, botMsg], lastMessage: responseText, timestamp: 'Now' } 
-          : s
-       ));
-       setLoading(false);
-    }, 1500);
+            const result = await chat.sendMessage({ message: text });
+            const responseText = result.text;
+
+            const botMsg: Message = { 
+                id: Date.now() + 1, 
+                sender: 'bot', 
+                text: responseText, 
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit'}) 
+            };
+
+            setSessions(prev => prev.map(s => 
+                s.id === sessionId 
+                ? { ...s, messages: [...s.messages, botMsg], lastMessage: responseText, timestamp: 'Now' } 
+                : s
+            ));
+        } catch (error) {
+            console.error("Gemini API Error:", error);
+            const errorMsg: Message = { 
+                id: Date.now() + 1, 
+                sender: 'bot', 
+                text: "Maaf, saya sedang mengalami gangguan koneksi. Mohon coba lagi nanti. 🙏", 
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit'}) 
+            };
+            setSessions(prev => prev.map(s => 
+                s.id === sessionId 
+                ? { ...s, messages: [...s.messages, errorMsg], lastMessage: "Error", timestamp: 'Now' } 
+                : s
+            ));
+        } finally {
+            setLoading(false);
+        }
+    } else {
+        // Seller Logic (Mock)
+        setTimeout(() => {
+           const responseText = getSellerResponse(text);
+           const botMsg: Message = { 
+             id: Date.now() + 1, 
+             sender: 'seller', 
+             text: responseText, 
+             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit'}) 
+           };
+           
+           setSessions(prev => prev.map(s => 
+              s.id === sessionId 
+              ? { ...s, messages: [...s.messages, botMsg], lastMessage: responseText, timestamp: 'Now' } 
+              : s
+           ));
+           setLoading(false);
+        }, 1500);
+    }
   };
 
   const handleNewAIChat = () => {
@@ -398,7 +431,7 @@ export const Chat: React.FC = () => {
                      <div className="flex gap-4 animate-pulse">
                         <div className="w-10 h-10 rounded-full bg-cover bg-center flex-shrink-0" style={{ backgroundImage: `url("${activeSession.avatar}")`}}></div>
                         <div className="flex items-center">
-                          <div className="text-gray-500 text-sm italic bg-white dark:bg-surface-dark px-4 py-2 rounded-xl rounded-tl-none border border-gray-200 dark:border-gray-700">Sedang mengetik...</div>
+                          <div className="text-gray-500 text-sm italic bg-white dark:bg-surface-dark px-4 py-2 rounded-xl rounded-tl-none border border-gray-200 dark:border-gray-700">Sedang berpikir...</div>
                         </div>
                      </div>
                    )}
@@ -408,7 +441,7 @@ export const Chat: React.FC = () => {
                 <div className="absolute bottom-0 left-0 w-full bg-white dark:bg-surface-dark border-t border-gray-200 dark:border-gray-800 p-4">
                    <div className="max-w-4xl mx-auto flex flex-col gap-3">
                       {/* Quick Questions Suggestions */}
-                      {currentSuggestions.length > 0 && (
+                      {currentSuggestions.length > 0 && !loading && (
                          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
                             {currentSuggestions.map((q, idx) => (
                                <button 
@@ -429,7 +462,8 @@ export const Chat: React.FC = () => {
                            onChange={(e) => setInput(e.target.value)}
                            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                            placeholder={activeSession.type === 'ai' ? "Tanya RANTU AI..." : `Kirim pesan ke ${activeSession.contactName}...`}
-                           className="w-full pl-4 pr-12 py-3.5 rounded-xl border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-background-dark focus:ring-primary focus:border-primary text-gray-900 dark:text-white shadow-sm"
+                           disabled={loading}
+                           className="w-full pl-4 pr-12 py-3.5 rounded-xl border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-background-dark focus:ring-primary focus:border-primary text-gray-900 dark:text-white shadow-sm disabled:opacity-60"
                          />
                          <button 
                            onClick={() => handleSend()} 
