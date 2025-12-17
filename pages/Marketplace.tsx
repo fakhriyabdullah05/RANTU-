@@ -35,7 +35,7 @@ export const Marketplace: React.FC = () => {
 
   const filteredProducts = products.filter(p => {
     // 1. Category Filter
-    let categoryMatch = true;
+    let categoryMatch: boolean = true;
     if (selectedCategory !== 'All') {
         const keywords = getSearchTerms(selectedCategory);
         const tagMatch = p.tags.some(tag => keywords.some(key => tag.toLowerCase().includes(key)));
@@ -44,12 +44,13 @@ export const Marketplace: React.FC = () => {
     }
 
     // 2. Search Query Filter
-    let searchMatch = true;
+    let searchMatch: boolean = true;
     if (searchQuery) {
         const lowerQ = searchQuery.toLowerCase();
-        searchMatch = p.name.toLowerCase().includes(lowerQ) || 
-                      p.tags.some(tag => tag.toLowerCase().includes(lowerQ)) ||
-                      (p.description && p.description.toLowerCase().includes(lowerQ));
+        const nameHit = p.name.toLowerCase().includes(lowerQ);
+        const tagHit = p.tags.some(tag => tag.toLowerCase().includes(lowerQ));
+        const descHit = p.description ? p.description.toLowerCase().includes(lowerQ) : false;
+        searchMatch = nameHit || tagHit || descHit;
     }
 
     return categoryMatch && searchMatch;
@@ -79,13 +80,10 @@ export const Marketplace: React.FC = () => {
             <FilterChip 
                key={cat} 
                // @ts-ignore - dynamic key access
-               label={t(`categories.${cat}`) || cat} 
+               label={String(t(`categories.${cat}`) || cat)} 
                active={selectedCategory === cat} 
                onClick={() => {
                   setSelectedCategory(cat);
-                  // Optional: clear search query when manually picking a category, 
-                  // or keep it to allow "searching within category".
-                  // For now, we keep the query if present.
                }}
             />
          ))}
